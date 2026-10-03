@@ -15,9 +15,10 @@ const WARN: Color = Color::Red;
 const OK: Color = Color::Green;
 
 pub fn draw(frame: &mut Frame, app: &App) {
-    let area = frame.area();
+    // One row and two columns on every side. The footer used to sit on the
+    // last row, which an HDMI capture crops off.
+    let area = inset(frame.area());
     let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
-    let body = inset(body);
     frame.render_widget(
         Paragraph::new(body_lines(app)).wrap(Wrap { trim: false }),
         body,
@@ -26,14 +27,16 @@ pub fn draw(frame: &mut Frame, app: &App) {
 }
 
 fn inset(area: Rect) -> Rect {
+    let width = area.width.saturating_sub(4);
+    let height = area.height.saturating_sub(2);
+    if width == 0 || height == 0 {
+        return area;
+    }
     Rect {
-        x: area.x.saturating_add(2).min(area.right().saturating_sub(1)),
-        y: area
-            .y
-            .saturating_add(1)
-            .min(area.bottom().saturating_sub(1)),
-        width: area.width.saturating_sub(4),
-        height: area.height.saturating_sub(2),
+        x: area.x.saturating_add(2),
+        y: area.y.saturating_add(1),
+        width,
+        height,
     }
 }
 
@@ -698,13 +701,15 @@ mod tests {
             .draw(|frame| draw(frame, &sample(Stage::Role, None)))
             .unwrap();
         let buffer = terminal.backend().buffer();
-        let y = buffer.area.height - 1;
-        let key = &buffer[(0, y)];
+        let y = buffer.area.height - 2;
+        let key = &buffer[(2, y)];
         assert_eq!(key.symbol(), "s");
         assert!(key.style().add_modifier.contains(Modifier::BOLD));
-        let word = &buffer[(2, y)];
+        let word = &buffer[(4, y)];
         assert_eq!(word.symbol(), "s");
         assert!(!word.style().add_modifier.contains(Modifier::BOLD));
+        assert_eq!(buffer[(0, y)].symbol(), " ");
+        assert_eq!(buffer[(2, buffer.area.height - 1)].symbol(), " ");
     }
 
     #[test]
@@ -715,7 +720,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let buffer = terminal.backend().buffer();
-        let y = buffer.area.height - 1;
+        let y = buffer.area.height - 2;
         let mut label = String::new();
         for x in 0..buffer.area.width {
             label.push_str(buffer[(x, y)].symbol());
