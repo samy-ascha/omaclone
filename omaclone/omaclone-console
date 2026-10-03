@@ -1,0 +1,11 @@
+#!/bin/sh
+# tty1 owner. When the operator quits, the login prompt comes back.
+# The follow-up unit is outside this service so it is not killed when
+# the TUI process exits and systemd releases the terminal.
+/usr/local/bin/omaclone
+if ! systemd-run --unit=omaclone-getty-return --collect /bin/sh -c \
+    'systemctl unmask getty@tty1.service; systemctl start getty@tty1.service'
+then
+    systemctl unmask getty@tty1.service || true
+    systemctl start getty@tty1.service || true
+fi

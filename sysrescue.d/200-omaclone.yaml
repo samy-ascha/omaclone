@@ -1,0 +1,9 @@
+---
+# Copied to sysrescue.d/ on the writable SystemRescue USB.
+# Boot options in YAML apply before autorun. nofirewall is the same switch
+# as `systemctl stop iptables ip6tables`: without it, sshd is running and
+# every inbound TCP connection, including port 22, is dropped.
+# Set the root password with the rootpass boot option. It is per machine
+# and does not belong in this file.
+global:
+  nofirewall: true

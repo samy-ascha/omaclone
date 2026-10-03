@@ -1,0 +1,125 @@
+#!/bin/sh
+# Start the omaclone TUI on tty1 and load Thunderbolt networking on a
+# SystemRescue MacBookPro11,4. Wi-Fi is not joined here. The program asks
+# for the network name and password when the operator opens that screen.
+#
+# The normal boot medium is the ISO from bake.sh. SystemRescue executes
+# /run/archiso/bootmnt/autorun/autorun from that image. A writable stick
+# can carry the same two files instead:
+#   autorun/autorun                  this file
+#   sysrescue.d/200-omaclone.yaml    nofirewall before this script runs
+# The root password is not set here. sshd is already running and rejects a
+# login until rootpass= is on the boot command line, or passwd was run.
+#
+# SystemRescue's autorun owns the console until this process exits, and a
+# non-zero exit makes it wait on that console. The TUI is started with
+# --no-block, and Thunderbolt setup continues in its own unit, so a slow
+# reload cannot leave tty1 with neither a program nor a login.
+set -eu
+
+# The binary lives on the boot medium, next to this script's parent. Copy it
+# into the live system and queue it on tty1 before Wi-Fi and Thunderbolt run.
+# getty on tty1 restarts itself if it is only stopped, so it is masked while
+# the TUI owns the screen. Alt+F2 remains a login. Quitting the TUI unmasks tty1.
+install_omaclone() {
+    boot_root=
+    for candidate in /run/archiso/bootmnt "$(dirname "$0")/.."; do
+        if [ -x "$candidate/omaclone/omaclone" ]; then
+            boot_root=$candidate
+            break
+        fi
+    done
+    if [ -z "$boot_root" ]; then
+        echo "omaclone binary is not on the boot medium." >&2
+        return 0
+    fi
+    cp "$boot_root/omaclone/omaclone" /usr/local/bin/omaclone
+    cp "$boot_root/omaclone/omaclone-console" /usr/local/bin/omaclone-console
+    chmod 755 /usr/local/bin/omaclone /usr/local/bin/omaclone-console
+    cp "$boot_root/omaclone/omaclone-tui.service" /etc/systemd/system/omaclone-tui.service
+}
+
+start_omaclone() {
+    if [ ! -x /usr/local/bin/omaclone ] || [ ! -c /dev/tty1 ]; then
+        return 0
+    fi
+    # active: already on screen. activating: queued and waiting for the
+    # console autorun still holds. A blocking start here deadlocks, because
+    # this process is autorun and the TUI cannot have the console until we exit.
+    state=$(systemctl is-active omaclone-tui.service 2>/dev/null || true)
+    case "$state" in
+        active|activating) return 0 ;;
+    esac
+    systemctl daemon-reload || true
+    systemctl reset-failed omaclone-tui.service || true
+    systemctl mask getty@tty1.service || true
+    systemctl stop --no-block getty@tty1.service || true
+    if ! systemctl start --no-block omaclone-tui.service; then
+        systemctl unmask getty@tty1.service || true
+        systemctl start --no-block getty@tty1.service || true
+        return 0
+    fi
+    : > /run/omaclone-tui.started
+    chvt 1 || true
+    return 0
+}
+
+install_omaclone
+trap start_omaclone EXIT
+
+# Hand the console back before the Thunderbolt reload, which can sit
+# for minutes. The copy is what the new unit runs: SystemRescue deletes
+# its own temporary copy of this file when autorun exits.
+if [ "${1:-}" != net ]; then
+    mkdir -p /usr/local/lib/omaclone
+    cp "$0" /usr/local/lib/omaclone/autorun
+    chmod 755 /usr/local/lib/omaclone/autorun
+    # Schedule the reload before the TUI takes the console. Taking tty1
+    # hangs up this process, and the reload would never start.
+    if ! systemd-run --unit=omaclone-net --collect --no-block \
+        --description=omaclone-net \
+        /usr/local/lib/omaclone/autorun net
+    then
+        echo "omaclone-net did not start; continuing in autorun." >&2
+        start_omaclone
+    else
+        start_omaclone
+        exit 0
+    fi
+fi
+
+# SystemRescue drops inbound packets by default. sshd is already up;
+# without this stop, a ping works and SSH times out.
+# 200-omaclone.yaml sets nofirewall for the next boot. This covers a
+# stick that does not have that file yet.
+systemctl stop iptables ip6tables || true
+
+# Falcon Ridge (Intel DSL5520, Thunderbolt 2) is already bound by udev with
+# the module defaults before this script runs. thunderbolt_net does not
+# autoload. Those defaults bring thunderbolt0 up at 2x10 Gb/s and then drop
+# every transmitted frame: clx is lane low-power, and e2e is USB4 end-to-end
+# flow control, which this controller cannot use. Both parameters are read
+# only at load time, so the modules have to be unloaded and loaded together.
+# The other machine must do the same. A peer that stayed up gives up the
+# host-to-host handshake after this one reboots; reload the drivers there too.
+# A busy module or a parameter that did not stick must not look like success.
+modprobe -r thunderbolt_net 2>/dev/null || true
+if [ -d /sys/module/thunderbolt ]; then
+    modprobe -r thunderbolt
+fi
+sleep 1
+modprobe thunderbolt clx=0
+modprobe thunderbolt_net e2e=0
+clx=$(cat /sys/module/thunderbolt/parameters/clx)
+e2e=$(cat /sys/module/thunderbolt_net/parameters/e2e)
+case "$clx" in N|n|0) ;; *)
+    echo "thunderbolt clx is '$clx', expected N" >&2
+    exit 1
+    ;;
+esac
+case "$e2e" in N|n|0) ;; *)
+    echo "thunderbolt_net e2e is '$e2e', expected N" >&2
+    exit 1
+    ;;
+esac
+echo "Thunderbolt net loaded with clx=0 e2e=0"

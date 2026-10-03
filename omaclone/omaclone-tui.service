@@ -1,0 +1,17 @@
+[Unit]
+Description=omaclone
+# Do not order this after sysrescue-autorun.service. Autorun is what starts
+# it, and that order makes systemd wait for autorun to exit before the
+# program can run, while autorun is waiting for this start to finish.
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/omaclone-console
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+Restart=no
