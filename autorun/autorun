@@ -35,6 +35,10 @@ install_omaclone() {
     fi
     cp "$boot_root/omaclone/omaclone" /usr/local/bin/omaclone
     cp "$boot_root/omaclone/omaclone-console" /usr/local/bin/omaclone-console
+    if [ -f "$boot_root/omaclone/capture-console" ]; then
+        cp "$boot_root/omaclone/capture-console" /usr/local/bin/capture-console
+        chmod 755 /usr/local/bin/capture-console
+    fi
     chmod 755 /usr/local/bin/omaclone /usr/local/bin/omaclone-console
     cp "$boot_root/omaclone/omaclone-tui.service" /etc/systemd/system/omaclone-tui.service
 }

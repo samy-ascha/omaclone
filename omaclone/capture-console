@@ -1,0 +1,64 @@
+#!/bin/sh
+# Fit the visible console to the 2560x1440 HDMI picture on these laptops.
+# The panel stays 2880x1800. HDMI only scans the top-left of that panel, so a
+# full-panel console leaves the bottom of the TUI out of a recording.
+# Run this on the machine being recorded, as root, when a capture is wanted.
+# It is not started at boot.
+#   capture-console
+#   capture-console restore
+set -eu
+
+mode=${1:-apply}
+case "$mode" in
+    apply|restore) ;;
+    *)
+        echo "usage: capture-console [restore]" >&2
+        exit 2
+        ;;
+esac
+
+python3 - "$mode" << 'PY'
+import ctypes, os, struct, sys
+
+mode = sys.argv[1]
+target = (2560, 1440)
+fb = "/dev/fb0"
+# FBIOPUT_VSCREENINFO / FBIOGET_VSCREENINFO. fb_var_screeninfo is 40 u32s.
+get_var, put_var = 0x4600, 0x4601
+libc = ctypes.CDLL(None, use_errno=True)
+fd = os.open(fb, os.O_RDWR)
+buf = ctypes.create_string_buffer(160)
+if libc.ioctl(fd, get_var, buf) != 0:
+    raise SystemExit(f"cannot read {fb}: errno {ctypes.get_errno()}")
+fields = list(struct.unpack("40I", buf.raw[:160]))
+virtual = (fields[2], fields[3])
+visible = (fields[0], fields[1])
+want = target if mode == "apply" else virtual
+if want[0] > virtual[0] or want[1] > virtual[1]:
+    raise SystemExit(
+        f"console {want[0]}x{want[1]} does not fit the {virtual[0]}x{virtual[1]} framebuffer"
+    )
+if visible == want:
+    print(f"console already {want[0]}x{want[1]}")
+    os.close(fd)
+    raise SystemExit(0)
+fields[0], fields[1] = want
+fields[4] = fields[5] = 0
+fields[21] = 2  # FB_ACTIVATE_TEST
+trial = ctypes.create_string_buffer(struct.pack("40I", *fields), 160)
+ctypes.set_errno(0)
+if libc.ioctl(fd, put_var, trial) != 0:
+    raise SystemExit(f"driver rejected {want[0]}x{want[1]}: errno {ctypes.get_errno()}")
+fields[21] = 0  # FB_ACTIVATE_NOW
+applied = ctypes.create_string_buffer(struct.pack("40I", *fields), 160)
+ctypes.set_errno(0)
+if libc.ioctl(fd, put_var, applied) != 0:
+    raise SystemExit(f"could not set {want[0]}x{want[1]}: errno {ctypes.get_errno()}")
+got = struct.unpack("40I", applied.raw[:160])
+os.close(fd)
+print(f"console {got[0]}x{got[1]} on a {got[2]}x{got[3]} framebuffer")
+PY
+
+if [ -c /dev/tty1 ]; then
+    echo "tty1 $(stty -F /dev/tty1 size)"
+fi

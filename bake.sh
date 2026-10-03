@@ -39,6 +39,7 @@ mkdir -p "$recipe/iso_add/autorun" \
 install -m 755 "$root/autorun/autorun" "$recipe/iso_add/autorun/autorun"
 install -m 755 "$bin" "$recipe/iso_add/omaclone/omaclone"
 install -m 755 "$root/omaclone/omaclone-console" "$recipe/iso_add/omaclone/omaclone-console"
+install -m 755 "$root/omaclone/capture-console" "$recipe/iso_add/omaclone/capture-console"
 install -m 644 "$root/omaclone/omaclone-tui.service" "$recipe/iso_add/omaclone/omaclone-tui.service"
 install -m 644 "$root/sysrescue.d/200-omaclone.yaml" "$recipe/iso_add/sysrescue.d/200-omaclone.yaml"
 

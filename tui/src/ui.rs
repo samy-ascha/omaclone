@@ -15,8 +15,7 @@ const WARN: Color = Color::Red;
 const OK: Color = Color::Green;
 
 pub fn draw(frame: &mut Frame, app: &App) {
-    // One row and two columns on every side. The footer used to sit on the
-    // last row, which an HDMI capture crops off.
+    // One row and two columns on every side, including the footer.
     let area = inset(frame.area());
     let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
     frame.render_widget(

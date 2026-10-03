@@ -65,6 +65,10 @@ cargo build --release --target x86_64-unknown-linux-musl
 
 `tui/deploy.sh HOST ASKPASS` builds that binary and installs it on a live SystemRescue root over SSH. The askpass program must be executable and must print the root password. Each live boot has a new SSH host key. The script keeps that key in a temporary file. If a copy is running, leave it alone. The new binary is what the next start of `omaclone` runs.
 
+## Recording
+
+HDMI on these laptops sends the top-left 2560×1440 of the 2880×1800 panel. `omaclone/capture-console`, run as root on the machine being recorded, sets the visible console to that rectangle so the whole TUI is in the picture. The panel mode is left alone. `capture-console restore` returns the console to the full panel. Boot does not run it. The next baked image installs it as `/usr/local/bin/capture-console`.
+
 ## Bake an ISO
 
 `bake.sh` builds the musl binary and calls `sysrescue-customize`. You need a SystemRescue 13.02 ISO and, on `PATH`, `sysrescue-customize`, `mksquashfs`, and `xorriso`. The customize tool is the one documented at <https://www.system-rescue.org/manual/customizing_systemrescue/>. The work directory needs a couple of gigabytes. `/var/tmp` is used unless `BAKE_WORK` is set.
@@ -73,7 +77,7 @@ cargo build --release --target x86_64-unknown-linux-musl
 ./bake.sh /path/to/systemrescue-13.02-amd64.iso
 ```
 
-The image is written to `out/systemrescue-13.02-amd64-omaclone.iso`. Pass a second path to write it somewhere else. The recipe is five files: `autorun/autorun`, `sysrescue.d/200-omaclone.yaml`, the binary, `omaclone/omaclone-console`, and `omaclone/omaclone-tui.service`. `out/` is gitignored.
+The image is written to `out/systemrescue-13.02-amd64-omaclone.iso`. Pass a second path to write it somewhere else. The recipe is `autorun/autorun`, `sysrescue.d/200-omaclone.yaml`, the binary, `omaclone/omaclone-console`, `omaclone/capture-console`, and `omaclone/omaclone-tui.service`. `out/` is gitignored.
 
 ## Layout
 
@@ -81,7 +85,7 @@ The image is written to `out/systemrescue-13.02-amd64-omaclone.iso`. Pass a seco
 | --- | --- |
 | `tui/` | The program. |
 | `autorun/autorun` | Boot script. Installs the binary, starts the TUI, reloads Thunderbolt. |
-| `omaclone/` | tty1 wrapper and the systemd unit copied onto the live system. |
+| `omaclone/` | tty1 wrapper, the recording-console command, and the systemd unit copied onto the live system. |
 | `sysrescue.d/200-omaclone.yaml` | Turns the SystemRescue firewall off before autorun, so SSH can answer. |
 | `bake.sh` | Builds the stick binary into a SystemRescue ISO. |
 
