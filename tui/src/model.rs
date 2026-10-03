@@ -3,8 +3,13 @@
 use crate::disk::{DropWatch, Inventory};
 use crate::wifi::Network;
 
-/// This machine's internal SSD. It is never a clone endpoint.
+/// Development machine internal SSD. It may be read as a source. It is never a target.
 pub const CONTROLLER_SERIAL: &str = "S2Z5NY0H998813";
+
+/// The protected disk must not be opened for writing.
+pub fn controller_is_target(role: Role, serial: &str) -> bool {
+    role == Role::Target && serial == CONTROLLER_SERIAL
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
@@ -445,7 +450,7 @@ impl App {
         if disk.serial.is_empty() {
             return Err("this disk has no serial.".to_string());
         }
-        if disk.serial == CONTROLLER_SERIAL {
+        if self.role == Some(Role::Target) && disk.serial == CONTROLLER_SERIAL {
             return Err("this disk is not a clone endpoint.".to_string());
         }
         if disk.bytes == 0 {
@@ -659,7 +664,7 @@ mod tests {
     }
 
     #[test]
-    fn the_controller_disk_is_never_a_clone_endpoint() {
+    fn the_controller_disk_can_be_a_source_but_not_a_target() {
         let mut app = app();
         app.inventory.disk.as_mut().unwrap().serial = CONTROLLER_SERIAL.to_string();
         app.inventory.link = Link {
@@ -671,6 +676,14 @@ mod tests {
         };
         app.stage = Stage::Ready;
         app.role = Some(Role::Source);
+        app.on_key(Key::Enter);
+        assert!(app.copy_launch);
+        assert!(!app.copy_note.contains("not a clone endpoint"));
+
+        app.copy_launch = false;
+        app.copy_note.clear();
+        app.copy_view = CopyView::Idle;
+        app.role = Some(Role::Target);
         app.on_key(Key::Enter);
         assert!(!app.copy_launch);
         assert!(app.copy_note.contains("not a clone endpoint"));

@@ -28,7 +28,7 @@ Boot does not join Wi-Fi and does not set a root password. For SSH, add `rootpas
 
 The copy is the source disk, byte for byte, over `thunderbolt0` only. The target does not open its disk until it has seen the source serial and size. A peer that is not a link-local address is dropped. If the target is larger, the bytes past the source are left as they are. FileVault and other encrypted volumes stay encrypted. The clone boots with the same accounts and keys as the source.
 
-The program refuses serial `S2Z5NY0H998813` on either side. That is the development machine's internal disk. Change `CONTROLLER_SERIAL` in `tui/src/model.rs` if a different disk must be protected, or if you need to clone that particular one.
+Serial `S2Z5NY0H998813` can be a source. The program still refuses to write it. That is the development machine's internal disk. Change `CONTROLLER_SERIAL` in `tui/src/model.rs` if a different disk must be protected.
 
 Pulling the cable during the copy leaves the target unbootable. Booting the source and the clone on one network duplicates host identity. Rename the clone before it shares a LAN with the original.
 
@@ -84,6 +84,5 @@ The image is written to `out/systemrescue-13.02-amd64-omaclone.iso`. Pass a seco
 | `omaclone/` | tty1 wrapper and the systemd unit copied onto the live system. |
 | `sysrescue.d/200-omaclone.yaml` | Turns the SystemRescue firewall off before autorun, so SSH can answer. |
 | `bake.sh` | Builds the stick binary into a SystemRescue ISO. |
-| `PLAN.md` | The same screens, in shorter form. |
 
 There is no license file yet. Ask before redistributing.

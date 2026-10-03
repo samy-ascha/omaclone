@@ -15,7 +15,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::disk::{self, human_bytes};
-use crate::model::{App, CONTROLLER_SERIAL, CopyView, Role};
+use crate::model::{App, CopyView, Role, controller_is_target};
 
 const IFACE: &str = "thunderbolt0";
 const PORT: u16 = 39441;
@@ -225,7 +225,7 @@ pub fn start(app: &App) -> Result<Running, String> {
         serial: disk.serial.clone(),
         bytes: disk.bytes,
     };
-    if job.serial == CONTROLLER_SERIAL {
+    if controller_is_target(role, &disk.serial) {
         return Err("this disk is not a clone endpoint.".to_string());
     }
     let bg = Arc::clone(&shared);
@@ -250,7 +250,7 @@ pub struct BenchReport {
 /// Copy `copy_bytes` over Thunderbolt and return when the hash matches.
 /// The target still admits on the real disk size, then writes only the source length.
 pub fn run_bench(role: Role, disk: &disk::Disk, copy_bytes: u64) -> Result<BenchReport, String> {
-    if disk.serial == CONTROLLER_SERIAL {
+    if controller_is_target(role, &disk.serial) {
         return Err("this disk is not a clone endpoint.".to_string());
     }
     if copy_bytes == 0 || copy_bytes > disk.bytes {
@@ -362,7 +362,7 @@ fn worker(job: Job, shared: Arc<Shared>) {
 }
 
 fn run_job(job: &Job, shared: &Shared) -> Result<[u8; 32], SessionError> {
-    if job.serial == CONTROLLER_SERIAL {
+    if controller_is_target(job.role, &job.serial) {
         return Err(fail("this disk is not a clone endpoint."));
     }
     let link = disk::read_link();
@@ -742,12 +742,12 @@ fn read_disk(disk: &mut File, buf: &mut [u8]) -> Result<usize, SessionError> {
     Ok(off)
 }
 
-/// Refuse the controller disk, a matching pair of serials, the same role, and a short target.
+/// Refuse a write to the controller disk, a matching pair of serials, the same role, and a short target.
 pub fn admit(local: &End, peer: &End) -> Result<(), String> {
-    if local.serial == CONTROLLER_SERIAL {
+    if controller_is_target(local.role, &local.serial) {
         return Err("this disk is not a clone endpoint.".to_string());
     }
-    if peer.serial == CONTROLLER_SERIAL {
+    if controller_is_target(peer.role, &peer.serial) {
         return Err("the other disk is not a clone endpoint.".to_string());
     }
     if local.serial.is_empty() || peer.serial.is_empty() {
@@ -1245,6 +1245,7 @@ fn bind_v4(fd: RawFd, ip: Ipv4Addr, port: u16) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::CONTROLLER_SERIAL;
     use std::sync::atomic::AtomicU64;
 
     static TEMPS: AtomicU64 = AtomicU64::new(0);
@@ -1272,18 +1273,22 @@ mod tests {
     }
 
     #[test]
-    fn admit_rejects_the_controller_a_short_target_and_the_same_serial() {
+    fn admit_rejects_the_controller_as_a_target_a_short_target_and_the_same_serial() {
         let (source, target) = pair(100, 150);
         assert!(admit(&source, &target).is_ok());
-        let mut controller = source.clone();
-        controller.serial = CONTROLLER_SERIAL.to_string();
+        let mut controller_source = source.clone();
+        controller_source.serial = CONTROLLER_SERIAL.to_string();
+        assert!(admit(&controller_source, &target).is_ok());
+        assert!(admit(&target, &controller_source).is_ok());
+        let mut controller_target = target.clone();
+        controller_target.serial = CONTROLLER_SERIAL.to_string();
         assert!(
-            admit(&controller, &target)
+            admit(&controller_target, &source)
                 .unwrap_err()
                 .contains("not a clone endpoint")
         );
         assert!(
-            admit(&target, &controller)
+            admit(&source, &controller_target)
                 .unwrap_err()
                 .contains("other disk")
         );
