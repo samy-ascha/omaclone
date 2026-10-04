@@ -12,6 +12,8 @@ StandardInput=tty
 StandardOutput=tty
 StandardError=tty
 TTYPath=/dev/tty1
+# Reset and hang up as this unit dies, before omaclone-console's queued
+# helper starts getty. A login started any earlier is cleared by the hangup.
 TTYReset=yes
 TTYVHangup=yes
 Restart=no

@@ -31,9 +31,18 @@ fn main() -> io::Result<()> {
     let mut app = App::new(inventory);
     show_link(&mut app, &wifi::snapshot());
     let mut terminal = ratatui::init();
-    let result = run(&mut terminal, &mut app);
-    ratatui::restore();
-    result
+    // Restore the console on the way out, including a panic. Otherwise tty1
+    // stays in the alternate screen and the login prompt is unusable.
+    let _restore = TerminalRestore;
+    run(&mut terminal, &mut app)
+}
+
+struct TerminalRestore;
+
+impl Drop for TerminalRestore {
+    fn drop(&mut self) {
+        ratatui::restore();
+    }
 }
 
 fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> io::Result<()> {

@@ -1,11 +1,14 @@
 #!/bin/sh
 # tty1 owner. When the operator quits, the login prompt comes back.
-# The follow-up unit is outside this service so it is not killed when
-# the TUI process exits and systemd releases the terminal.
+# getty@tty1 conflicts with omaclone-tui, and this unit hangs up tty1
+# as it dies. Starting getty from this process deadlocks on that
+# conflict or loses the new login to the hangup, and tty1 stays blank.
+# Queue the handoff, exit, and let it run only once this unit is inactive.
 /usr/local/bin/omaclone
-if ! systemd-run --unit=omaclone-getty-return --collect /bin/sh -c \
-    'systemctl unmask getty@tty1.service; systemctl start getty@tty1.service'
-then
-    systemctl unmask getty@tty1.service || true
-    systemctl start getty@tty1.service || true
-fi
+status=$?
+systemd-run --no-block --unit=omaclone-getty-return --collect \
+    --description=omaclone-getty-return \
+    /bin/sh -c 'while systemctl is-active --quiet omaclone-tui.service; do sleep 0.1; done
+systemctl unmask getty@tty1.service
+systemctl start getty@tty1.service'
+exit "$status"
