@@ -113,6 +113,8 @@ The easiest way to use `omaclone` is with the custom SystemRescue ISO produced b
 
 Write the resulting ISO to **two USB sticks**.
 
+One stick is enough if you uncomment `copytoram` in `sysrescue.d/200-omaclone.yaml`. The system then loads into memory, and once the TUI is up the stick can boot the other machine. Leave the option commented out and the stick has to stay inserted. Boot the first machine fully, move the stick, boot the second, then reload Thunderbolt on both machines together before choosing roles.
+
 Then:
 
 1. Connect the two MacBooks with the Thunderbolt cable.

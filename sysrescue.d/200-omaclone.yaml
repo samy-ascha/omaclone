@@ -5,5 +5,10 @@
 # every inbound TCP connection, including port 22, is dropped.
 # Set the root password with the rootpass boot option. It is per machine
 # and does not belong in this file.
+# copytoram loads the system into memory so one USB stick can boot both
+# machines. It needs about 2 GB of RAM and a longer boot. Uncomment it
+# only when the stick has to move after the TUI is up. Then reload
+# Thunderbolt on both machines together before choosing roles.
 global:
   nofirewall: true
+  # copytoram: true
