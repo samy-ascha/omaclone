@@ -13,7 +13,7 @@ There is no third computer involved, and the copy does not use Wi-Fi or your nor
 ## At a glance
 
 | | |
-|---|---|
+| --- | --- |
 | **Source → target** | MacBook → MacBook |
 | **Connection** | Thunderbolt 2 |
 | **Transfer** | Raw disk bytes |
@@ -70,7 +70,7 @@ The two machines run the same rescue environment:
    │ source disk │                │ target disk │
    └──────┬──────┘                └──────▲──────┘
           │                              │
-          │       raw disk bytes        │
+          │       raw disk bytes         │
           └──────── Thunderbolt ─────────┘
                        │
                   thunderbolt0
@@ -168,7 +168,7 @@ The final screen shows the completed byte count and the BLAKE3 hash.
 ### During cloning
 
 | Key | Action |
-|---|---|
+| --- | --- |
 | `s` | Select this machine as the source |
 | `t` | Select this machine as the target |
 | `Enter` | Continue / start the copy |
