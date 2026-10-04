@@ -135,15 +135,21 @@ The application walks through a small number of stages:
 
 Choose whether this laptop is the source or target.
 
+![Role screen](screens/role.png)
+
 **Disk**
 
 Shows the detected internal disk, including its model, size, serial number, device name, and partitions.
 
 The boot USB is shown separately so it is clear which disk will actually be cloned.
 
+![Disk screen](screens/disk.png)
+
 **Cable**
 
 Shows the state of the Thunderbolt connection, including its address, driver settings, packet drops and an approximate link speed.
+
+![Cable screen](screens/cable.png)
 
 **Confirm**
 
@@ -151,15 +157,31 @@ Only shown for the target.
 
 The screen clearly states that the disk will be erased. You must type the disk serial number exactly as displayed.
 
+![Confirm screen](screens/confirm.png)
+
 **Ready**
 
 Both machines wait here until the other side is ready.
 
 Press `Enter` on both machines to start the copy.
 
+![Ready screen](screens/ready.png)
+
+![Ready screen on the target](screens/ready-target.png)
+
+**Progress**
+
+While the copy runs, the screen shows how much of the disk has been transferred. `Esc` asks the copy to stop.
+
+![Progress screen](screens/progress.png)
+
 **Done**
 
 The final screen shows the completed byte count and the BLAKE3 hash.
+
+![Done screen](screens/done.png)
+
+![Done screen on the target](screens/done-target.png)
 
 ---
 
@@ -232,6 +254,8 @@ From there you can:
 - connect to a hidden network
 - disconnect
 - inspect the current connection
+
+![Wi-Fi screen](screens/wifi.png)
 
 The Wi-Fi password is entered interactively and is not stored in this repository.
 

@@ -23,8 +23,8 @@ struct State {
     bits: Mutex<Option<u64>>,
     note: Mutex<String>,
     testing: AtomicBool,
+    busy: AtomicBool,
     last_try: Mutex<Option<Instant>>,
-    yielded: AtomicBool,
     sink_up: AtomicBool,
 }
 
@@ -34,8 +34,8 @@ fn speed_state() -> &'static State {
         bits: Mutex::new(None),
         note: Mutex::new(String::new()),
         testing: AtomicBool::new(false),
+        busy: AtomicBool::new(false),
         last_try: Mutex::new(None),
-        yielded: AtomicBool::new(false),
         sink_up: AtomicBool::new(false),
     })
 }
@@ -60,15 +60,17 @@ pub fn clear() {
     *lock(&state.bits) = None;
     lock(&state.note).clear();
     *lock(&state.last_try) = None;
-    state.yielded.store(false, Ordering::Relaxed);
+}
+
+/// The lower link-local address sends. The other side waits, and sends only
+/// if that measurement never arrives. Either laptop can still press `t`.
+pub(crate) fn peer_sends_first(local: Ipv4Addr, peer: Ipv4Addr) -> bool {
+    local > peer
 }
 
 /// Returns true when a measurement thread was started.
 pub fn start(force_client: bool) -> bool {
     let state = speed_state();
-    if !force_client && state.yielded.load(Ordering::Relaxed) {
-        return false;
-    }
     if !force_client {
         let mut last = lock(&state.last_try);
         if last.is_some_and(|tried| tried.elapsed() < Duration::from_secs(1)) {
@@ -77,7 +79,7 @@ pub fn start(force_client: bool) -> bool {
         *last = Some(Instant::now());
     }
     if state
-        .testing
+        .busy
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
         .is_err()
     {
@@ -97,11 +99,12 @@ pub fn start(force_client: bool) -> bool {
                 }
             }
             state.testing.store(false, Ordering::Release);
+            state.busy.store(false, Ordering::Release);
         });
     match spawned {
         Ok(_) => true,
         Err(_) => {
-            state.testing.store(false, Ordering::Release);
+            state.busy.store(false, Ordering::Release);
             false
         }
     }
@@ -171,15 +174,31 @@ fn run(force_client: bool) -> Result<Option<u64>, String> {
             Ok(None)
         };
     };
-    if !force_client && local > peer {
-        speed_state().yielded.store(true, Ordering::Relaxed);
-        return Ok(None);
+    // Looking for the other laptop must not flip the screen to "testing".
+    // Only a real transfer, or the wait for one, does.
+    if !force_client && peer_sends_first(local, peer) {
+        speed_state().testing.store(true, Ordering::Release);
+        if wait_for_result(Duration::from_secs(3)) {
+            return Ok(None);
+        }
     }
     match push(local, peer) {
         Ok(bits) => Ok(Some(bits)),
         Err(_) if !force_client => Ok(None),
         Err(err) => Err(err),
     }
+}
+
+fn wait_for_result(limit: Duration) -> bool {
+    let state = speed_state();
+    let deadline = Instant::now() + limit;
+    while Instant::now() < deadline {
+        if lock(&state.bits).is_some() {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    false
 }
 
 fn ensure_sink(local: Ipv4Addr) {
@@ -261,6 +280,7 @@ fn drain(stream: &mut TcpStream) -> Option<u64> {
 
 fn push(local: Ipv4Addr, peer: Ipv4Addr) -> Result<u64, String> {
     let mut stream = copy::connect_on(local, SocketAddrV4::new(peer, TCP_PORT))?;
+    speed_state().testing.store(true, Ordering::Release);
     let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
     let buf = vec![0u8; 1024 * 1024];
     let started = Instant::now();
@@ -362,5 +382,13 @@ mod tests {
 169.254.255.255 dev thunderbolt0 lladdr aa:bb REACHABLE
 ";
         assert_eq!(parse_neigh(text), vec![Ipv4Addr::new(169, 254, 247, 15)]);
+    }
+
+    #[test]
+    fn the_higher_address_waits_for_the_other_laptop_to_send() {
+        let lower = Ipv4Addr::new(169, 254, 247, 15);
+        let higher = Ipv4Addr::new(169, 254, 251, 250);
+        assert!(peer_sends_first(higher, lower));
+        assert!(!peer_sends_first(lower, higher));
     }
 }

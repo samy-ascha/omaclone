@@ -43,7 +43,7 @@ fn body_lines(app: &App) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from(vec![
             Span::styled("omaclone", Style::new().bold()),
-            Span::styled(format!("  {}", stage_name(app.stage)), Style::new().fg(DIM)),
+            Span::styled(format!("  {}", stage_name(app)), Style::new().fg(DIM)),
         ]),
         Line::from(""),
     ];
@@ -58,13 +58,19 @@ fn body_lines(app: &App) -> Vec<Line<'static>> {
     lines
 }
 
-fn stage_name(stage: Stage) -> &'static str {
-    match stage {
+fn stage_name(app: &App) -> &'static str {
+    match app.stage {
         Stage::Role => "Role",
         Stage::Disk => "Disk",
         Stage::Cable => "Cable",
         Stage::Confirm => "Confirm",
-        Stage::Ready => "Ready",
+        Stage::Ready => match app.copy_view {
+            CopyView::Copying => "Copying",
+            CopyView::Done => "Done",
+            CopyView::Stopped => "Stopped",
+            CopyView::Failed => "Failed",
+            CopyView::Idle | CopyView::Waiting => "Ready",
+        },
         Stage::Wifi => "Wi-Fi",
     }
 }
@@ -179,22 +185,21 @@ fn confirm_lines(app: &App) -> Vec<Line<'static>> {
 fn ready_lines(app: &App) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     match app.role {
-        Some(Role::Source) => {
+        Some(Role::Source) if matches!(app.copy_view, CopyView::Idle | CopyView::Waiting) => {
             lines.push(Line::from("Ready to read this disk."));
             if app.copy_view == CopyView::Idle {
                 lines.push(dim_line("The target laptop has to type its own serial."));
             }
         }
-        Some(Role::Target) => {
+        Some(Role::Target) if matches!(app.copy_view, CopyView::Idle | CopyView::Waiting) => {
             lines.push(Line::from("Serial matches."));
-            if matches!(app.copy_view, CopyView::Idle | CopyView::Waiting) {
-                lines.push(Line::from(Span::styled(
-                    "Ready to erase this disk when the copy starts.",
-                    Style::new().fg(WARN),
-                )));
-            }
+            lines.push(Line::from(Span::styled(
+                "Ready to erase this disk when the copy starts.",
+                Style::new().fg(WARN),
+            )));
         }
         None => lines.push(Line::from("No role selected.")),
+        Some(Role::Source | Role::Target) => {}
     }
     lines.push(Line::from(""));
     if !app.copy_peer.is_empty() && app.copy_view != CopyView::Idle {
@@ -661,6 +666,7 @@ mod tests {
     fn ready_screen_starts_the_copy_and_shows_progress() {
         let mut app = sample(Stage::Ready, Some(Role::Source));
         let idle = render(&app);
+        assert!(idle.contains("omaclone  Ready"));
         assert!(idle.contains("Press enter on both laptops to start."));
         assert!(idle.contains("enter start"));
         assert!(!idle.contains("does not start"));
@@ -669,6 +675,9 @@ mod tests {
         app.copy_done = 50;
         app.copy_total = 100;
         let copying = render(&app);
+        assert!(copying.contains("omaclone  Copying"));
+        assert!(!copying.contains("omaclone  Ready"));
+        assert!(!copying.contains("Ready to read this disk."));
         assert!(copying.contains("50%"));
         assert!(copying.contains("esc abort"));
         assert!(!copying.contains("enter start"));
@@ -677,9 +686,17 @@ mod tests {
         app.copy_done = 100;
         app.copy_hash = "abc".to_string();
         let done = render(&app);
+        assert!(done.contains("omaclone  Done"));
+        assert!(!done.contains("Ready to read this disk."));
         assert!(done.contains("Copy finished."));
         assert!(done.contains("BLAKE3  abc"));
         assert!(done.contains("esc back"));
+
+        app.role = Some(Role::Target);
+        let target_done = render(&app);
+        assert!(target_done.contains("omaclone  Done"));
+        assert!(!target_done.contains("Serial matches."));
+        assert!(!target_done.contains("Ready to erase"));
     }
 
     #[test]
