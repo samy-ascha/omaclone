@@ -1,6 +1,7 @@
 #!/bin/sh
 # Build the static binary and fold it into a SystemRescue ISO.
-# Requires sysrescue-customize, mksquashfs, and xorriso on PATH.
+# The user installs squashfs-tools (mksquashfs) and libisoburn (xorriso).
+# This script never installs packages. It warns and stops when a tool is missing.
 # https://www.system-rescue.org/manual/customizing_systemrescue/
 set -eu
 
@@ -13,14 +14,23 @@ if [ -z "$source_iso" ] || [ ! -f "$source_iso" ]; then
     exit 2
 fi
 
-missing=
-for cmd in sysrescue-customize mksquashfs xorriso cargo; do
+missing=0
+if ! command -v mksquashfs >/dev/null 2>&1; then
+    echo "warning: mksquashfs was not found. Install squashfs-tools, then run bake again." >&2
+    missing=1
+fi
+if ! command -v xorriso >/dev/null 2>&1; then
+    echo "warning: xorriso was not found. Install libisoburn, then run bake again." >&2
+    missing=1
+fi
+for cmd in sysrescue-customize cargo; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
-        missing="$missing $cmd"
+        echo "warning: $cmd was not found on PATH." >&2
+        missing=1
     fi
 done
-if [ -n "$missing" ]; then
-    echo "missing on PATH:$missing" >&2
+if [ "$missing" -ne 0 ]; then
+    echo "warning: bake.sh left the packages alone. Install what is missing, then run it again." >&2
     exit 1
 fi
 

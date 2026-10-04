@@ -422,11 +422,13 @@ The repository contains everything needed to turn an existing SystemRescue ISO i
 You need:
 
 - SystemRescue **13.02**
+- `squashfs-tools`, which provides `mksquashfs`
+- `libisoburn`, which provides `xorriso`
 - `sysrescue-customize`
-- `mksquashfs`
-- `xorriso`
 - `cargo`
 - the `x86_64-unknown-linux-musl` Rust target
+
+Install `squashfs-tools` and `libisoburn` yourself. `bake.sh` warns when either tool is missing and leaves the packages alone.
 
 Then run:
 
