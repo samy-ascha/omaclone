@@ -1,92 +1,503 @@
 # omaclone
 
-Clone the internal disk of one laptop onto the other. Each machine boots the same SystemRescue stick, picks source or target, and the bytes move over a Thunderbolt cable. There is no third machine in the copy.
+> **Clone one MacBook directly to another over Thunderbolt.**
 
-This was proven on two MacBookPro11,4 machines (15-inch Retina MacBook Pro, Mid 2015): Apple SSD SM0256G, Broadcom BCM43602 Wi-Fi, Intel DSL5520 Thunderbolt 2. A full-disk copy from one to the other booted the cloned OS. On that hardware the copy holds about 10 Gbit/s, so a 234 GiB disk takes about three and a half minutes.
+`omaclone` is a small Rust terminal application and custom SystemRescue image for making a **byte-for-byte clone of one MacBook's internal disk onto another MacBook**.
 
-The program is a small Rust TUI. It refuses to write until the target operator types that disk's serial, refuses a target smaller than the source, and checks the copy with BLAKE3.
+The two machines boot the same USB stick, you designate one as the source and the other as the target, and the disks are copied directly over a Thunderbolt cable.
 
-## Use the sticks
+There is no third computer involved, and the copy does not use Wi-Fi or your normal network.
 
-Write `out/systemrescue-13.02-amd64-omaclone.iso` to two USB sticks. A `dd` of the ISO is enough. The stick can stay read-only: SystemRescue runs `autorun/autorun` from the boot medium either way.
+---
 
-Boot both laptops with the Thunderbolt cable between them.
+## At a glance
 
-1. **Role.** `s` reads this disk. `t` erases this disk.
-2. **Disk.** Model, exact size, serial, and device name. A USB stick is shown as the boot medium, not as a clone disk.
-3. **Cable.** Thunderbolt address and link. Green means the value is the one a working link needs. `r` reloads the Thunderbolt driver on this laptop. Both laptops have to do that, together. `t` runs a two-second speed test. Under 5 Gbit/s is red. Drops are packets lost in the last 15 seconds. Any drop in that window is red, and older losses clear.
-4. **Confirm.** Target only. The screen says the disk will be erased. Type the serial shown above the prompt. A mismatch stays here.
-5. **Ready.** `enter` on both laptops starts the copy. Esc aborts. A finished copy shows the BLAKE3 of the bytes. Enter after that does not start again.
+| | |
+|---|---|
+| **Source → target** | MacBook → MacBook |
+| **Connection** | Thunderbolt 2 |
+| **Transfer** | Raw disk bytes |
+| **Verification** | BLAKE3 |
+| **Tested hardware** | MacBook Pro 15" Retina, Mid 2015 |
+| **Typical speed** | ~10 Gbit/s |
+| **234 GiB disk** | ~3½ minutes |
 
-`w` opens Wi-Fi from any clone screen except the serial prompt. That screen is not part of the copy. `d` disconnects. `q` quits, except while a copy is running or while a serial, network name, or password is being typed. `ctrl-c` always quits. Alt+F2 is a login if the TUI is not on tty1. Quitting the TUI brings the tty1 login back.
+> ⚠️ **This is destructive software.** The target disk is erased. Make sure you have selected the correct target before starting a copy.
 
-Boot does not join Wi-Fi and does not set a root password. For SSH, add `rootpass=` on the boot command line of that machine. Do not put that password, or a Wi-Fi passphrase, in this tree.
+## What it was built for
 
-`sysrescue-autorun.service` can show FAILED in red during boot. The TUI takes tty1 and the autorun process receives SIGHUP. The Thunderbolt reload is scheduled before that handoff. The link is ready when `clx` and `e2e` are off and `thunderbolt0` has an address.
+The project was developed and tested specifically with two:
 
-## What the copy will and will not do
+- **MacBook Pro 15-inch Retina, Mid 2015**
+- Model **MacBookPro11,4 / A1398**
+- Apple **SM0256G** internal SSD
+- Intel **DSL5520 / Thunderbolt 2**
+- Broadcom **BCM43602** Wi-Fi
 
-The copy is the source disk, byte for byte, over `thunderbolt0` only. The target does not open its disk until it has seen the source serial and size. A peer that is not a link-local address is dropped. If the target is larger, the bytes past the source are left as they are. FileVault and other encrypted volumes stay encrypted. The clone boots with the same accounts and keys as the source.
+On this hardware, a complete 234 GiB disk clone takes roughly **three and a half minutes**, with the Thunderbolt network reaching around **10 Gbit/s**.
 
-Serial `S2Z5NY0H998813` can be a source. The program still refuses to write it. That is the development machine's internal disk. Change `CONTROLLER_SERIAL` in `tui/src/model.rs` if a different disk must be protected.
+Other hardware may work, but it has not been the target of this project.
 
-Pulling the cable during the copy leaves the target unbootable. Booting the source and the clone on one network duplicates host identity. Rename the clone before it shares a LAN with the original.
+## Why?
 
-These two ports are one Falcon Ridge controller. A second Thunderbolt cable does not add a second full-speed path, and this program uses one TCP stream on `thunderbolt0`.
+Sometimes you want an exact copy of a machine rather than a fresh installation and a migration of files.
+
+`omaclone` copies the source disk as a block device, including things such as:
+
+- the partition layout
+- operating system
+- applications
+- user accounts
+- configuration
+- encrypted volumes
+- boot data
+
+The result is intended to be a bootable clone of the source machine.
+
+Because this is a disk-level copy, the clone initially has the same machine identity as the source. **Do not put the source and clone on the same network without changing the clone's hostname and any other identity that needs to be unique.**
+
+---
+
+## How it works
+
+The two machines run the same rescue environment:
+
+```text
+       SOURCE                         TARGET
+   ┌─────────────┐                ┌─────────────┐
+   │  MacBook A  │                │  MacBook B  │
+   │             │                │             │
+   │ source disk │                │ target disk │
+   └──────┬──────┘                └──────▲──────┘
+          │                              │
+          │       raw disk bytes        │
+          └──────── Thunderbolt ─────────┘
+                       │
+                  thunderbolt0
+```
+
+The source reads its disk directly as a block device.
+
+The target writes directly to its disk.
+
+Only the number of bytes occupied by the source disk is copied. If the target is larger, the space beyond the end of the source is left alone.
+
+After the copy, the data is independently verified with **BLAKE3**.
+
+---
+
+## Safety checks
+
+A disk clone is an easy thing to get catastrophically wrong, so `omaclone` deliberately puts several barriers between choosing a target and actually writing to it.
+
+Before the copy starts:
+
+1. Both machines identify their internal disks.
+2. You explicitly choose **source** or **target** on each machine.
+3. The machines exchange their disk serial numbers and sizes.
+4. The target must be at least as large as the source.
+5. The target operator must type the **target disk's serial number**.
+6. The two machines must have opposite roles.
+7. A disk with the configured protected serial number can never be used as a target.
+8. The actual copy only uses the Thunderbolt network interface.
+
+The target disk is not opened for writing until the two machines have successfully identified and admitted one another.
+
+After the copy, the source and target independently participate in a **BLAKE3 verification**. The target reports success only when its hash matches the source's hash.
+
+---
+
+## Using the rescue image
+
+The easiest way to use `omaclone` is with the custom SystemRescue ISO produced by this repository.
+
+Write the resulting ISO to **two USB sticks**.
+
+Then:
+
+1. Connect the two MacBooks with the Thunderbolt cable.
+2. Boot both machines from the USB sticks.
+3. On one machine choose `source`.
+4. On the other choose `target`.
+5. Check the disks displayed by the TUI.
+6. Check the Thunderbolt connection on both machines.
+7. On the target, type the displayed disk serial number.
+8. Press `Enter` on both machines.
+9. Wait for the copy and BLAKE3 verification to finish.
+
+The TUI intentionally makes the process symmetrical: both laptops run exactly the same software and differ only in the role you select.
+
+### The screens
+
+The application walks through a small number of stages:
+
+**Role**
+
+Choose whether this laptop is the source or target.
+
+**Disk**
+
+Shows the detected internal disk, including its model, size, serial number, device name, and partitions.
+
+The boot USB is shown separately so it is clear which disk will actually be cloned.
+
+**Cable**
+
+Shows the state of the Thunderbolt connection, including its address, driver settings, packet drops and an approximate link speed.
+
+**Confirm**
+
+Only shown for the target.
+
+The screen clearly states that the disk will be erased. You must type the disk serial number exactly as displayed.
+
+**Ready**
+
+Both machines wait here until the other side is ready.
+
+Press `Enter` on both machines to start the copy.
+
+**Done**
+
+The final screen shows the completed byte count and the BLAKE3 hash.
+
+---
+
+## Keyboard controls
+
+### During cloning
+
+| Key | Action |
+|---|---|
+| `s` | Select this machine as the source |
+| `t` | Select this machine as the target |
+| `Enter` | Continue / start the copy |
+| `Esc` | Go back / cancel the current stage |
+| `q` | Quit |
+| `Ctrl-C` | Quit immediately |
+| `w` | Open the Wi-Fi screen |
+| `r` | Reload the Thunderbolt drivers |
+| `t` | Run the Thunderbolt speed test |
+
+`q` and `Esc` cannot accidentally abandon a serial-number entry by being interpreted as commands while you are typing.
+
+While a copy is running, quitting requests that the copy stop instead of silently leaving it running.
+
+---
 
 ## Thunderbolt
 
-A stock boot looks connected and then drops every transmitted frame. The DSL5520 needs both drivers loaded with lane low-power and USB4 end-to-end flow control off, on both laptops, at the same time:
+The most important part of this project is the Thunderbolt networking.
 
-```text
+On the supported MacBook hardware, the normal Linux Thunderbolt configuration can appear to work while actually dropping transmitted packets. The Intel DSL5520 controller needs two particular driver parameters disabled:
+
+```sh
 modprobe -r thunderbolt_net thunderbolt
 modprobe thunderbolt clx=0
 modprobe thunderbolt_net e2e=0
 ```
 
-`autorun/autorun` does this after handing the console to the TUI. Pressing `r` on only one laptop drops the host-to-host handshake. Press it on both, or boot both from this image. After a good reload a single TCP stream on this hardware is about 10 Gbit/s. The SSD and the CPU are not the limit. The Thunderbolt IP path is.
+The rescue image loads the drivers with those settings automatically.
+
+Both machines need to perform this setup. The TUI therefore shows the relevant state rather than simply assuming that an interface called `thunderbolt0` means the connection is usable.
+
+If the link is connected but traffic is not passing, press `r` on **both machines**.
+
+The TUI also runs a short speed test and watches recent packet drops. This makes it possible to distinguish "Thunderbolt is plugged in" from "Thunderbolt is actually usable for a disk clone."
+
+The actual copy uses:
+
+```text
+thunderbolt0
+```
+
+and a single TCP connection.
+
+Wi-Fi is never used for the disk data.
+
+---
 
 ## Wi-Fi
 
-Wi-Fi is for SSH and for looking around the rescue system. The disk stream does not use it. On this Broadcom chip the TUI reloads `brcmfmac` with `roamoff=1` the first time that screen opens, and sets the regulatory domain to `NL` so a 5 GHz DFS channel can be used. Change that domain in `tui/src/wifi.rs` if you are somewhere else. The program stores a NetworkManager profile after the password is typed. `nmcli device wifi connect` and `nmcli --ask` start WPS on some access points, so the TUI does not use those commands.
+Wi-Fi is optional.
 
-## Build
+It is provided primarily so that you can SSH into the SystemRescue environment or otherwise inspect the machine while it is running.
 
-The stick binary is a static musl executable. From a Rust toolchain that has the musl target:
+Press `w` from the clone screens to open the Wi-Fi interface.
+
+From there you can:
+
+- scan for networks
+- connect to a visible network
+- connect to a hidden network
+- disconnect
+- inspect the current connection
+
+The Wi-Fi password is entered interactively and is not stored in this repository.
+
+The Broadcom Wi-Fi driver is also adjusted for the supported hardware when the Wi-Fi screen is opened.
+
+If you use the project outside the Netherlands, note that the current implementation sets the Wi-Fi regulatory domain to `NL`. Change this in `tui/src/wifi.rs` if appropriate for your location.
+
+### SSH
+
+The rescue environment does not set a root password automatically.
+
+If you want SSH access, supply a `rootpass=` boot parameter or set a password yourself after booting.
+
+Do not put passwords or Wi-Fi credentials into this repository.
+
+---
+
+## What gets copied?
+
+The copy is deliberately simple:
 
 ```text
-rustup target add x86_64-unknown-linux-musl
+source disk
+    │
+    │  raw bytes
+    ▼
+Thunderbolt 2
+    │
+    │  raw bytes
+    ▼
+target disk
+```
+
+The source disk is read directly as a block device.
+
+The target disk is written directly as a block device.
+
+Only the number of bytes occupied by the source disk is copied. If the target is larger, the space beyond the end of the source is left alone.
+
+Encrypted volumes remain encrypted; `omaclone` does not need to understand the filesystem or the encryption scheme.
+
+---
+
+## Important limitations
+
+### Supported hardware
+
+This project is currently a specialized tool, not a general-purpose disk-cloning application.
+
+It was built around the **MacBookPro11,4 / A1398** and its Intel Thunderbolt 2 controller.
+
+The software makes hardware-specific assumptions about:
+
+- the Thunderbolt controller
+- its Linux drivers
+- the Broadcom Wi-Fi adapter
+- the SystemRescue environment
+- the internal disk layout
+
+If you have a different Mac, expect to do some work before relying on it.
+
+### Do not interrupt a copy
+
+Disconnecting the Thunderbolt cable or otherwise interrupting a copy can leave the target disk incomplete and unbootable.
+
+If the copy is stopped part-way through, treat the target as invalid and start again.
+
+### Do not immediately network the clone with its source
+
+A byte-for-byte clone has the same operating-system state and machine identity as the source.
+
+Booting both machines onto the same network before changing their identities can cause conflicts.
+
+### The source must fit on the target
+
+The target disk must be at least as large as the source disk.
+
+The tool refuses to start if it is smaller.
+
+### One Thunderbolt path
+
+The two Thunderbolt ports on these machines belong to the same Falcon Ridge controller. Connecting a second Thunderbolt cable does not provide a second independent full-speed path.
+
+`omaclone` currently uses one TCP stream over `thunderbolt0`.
+
+---
+
+## Building the application
+
+The TUI is a small Rust application.
+
+It uses:
+
+- Rust 2024 edition
+- `ratatui`
+- `blake3`
+- `libc`
+
+To build and test it:
+
+```sh
 cd tui
+
 cargo test
+
+rustup target add x86_64-unknown-linux-musl
+
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-`cargo run -- --print` prints the internal disk this machine would use and exits. It does not need the musl target. Do not point a copy at a machine whose disk you are not willing to erase.
-
-`tui/deploy.sh HOST ASKPASS` builds that binary and installs it on a live SystemRescue root over SSH. The askpass program must be executable and must print the root password. Each live boot has a new SSH host key. The script keeps that key in a temporary file. If a copy is running, leave it alone. The new binary is what the next start of `omaclone` runs.
-
-## Recording
-
-HDMI on these laptops sends the top-left 2560×1440 of the 2880×1800 panel. `omaclone/capture-console`, run as root on the machine being recorded, sets the visible console to that rectangle so the whole TUI is in the picture. The panel mode is left alone. `capture-console restore` returns the console to the full panel. Boot does not run it. The next baked image installs it as `/usr/local/bin/capture-console`.
-
-## Bake an ISO
-
-`bake.sh` builds the musl binary and calls `sysrescue-customize`. You need a SystemRescue 13.02 ISO and, on `PATH`, `sysrescue-customize`, `mksquashfs`, and `xorriso`. The customize tool is the one documented at <https://www.system-rescue.org/manual/customizing_systemrescue/>. The work directory needs a couple of gigabytes. `/var/tmp` is used unless `BAKE_WORK` is set.
+The resulting binary is:
 
 ```text
+tui/target/x86_64-unknown-linux-musl/release/omaclone
+```
+
+It is a static musl executable intended for the SystemRescue environment.
+
+### Inspect a machine without starting the TUI
+
+Once the `omaclone` binary is built and available in your `PATH`, you can ask it what it thinks the internal disk is:
+
+```sh
+omaclone --print
+```
+
+This prints information such as:
+
+```text
+MacBookPro11,4
+APPLE SSD SM0256G
+S29CNYDG898371
+251000193024 bytes
+233.8 GiB
+/dev/sda
+```
+
+It also reports the detected USB devices and Thunderbolt state.
+
+The `--print` mode does not require the musl target.
+
+> **Warning:** do not point a copy at a machine whose disk you are not willing to erase.
+
+### Deploying a new binary
+
+For development, `tui/deploy.sh` can build the binary and install it into an already-running SystemRescue environment over SSH:
+
+```sh
+tui/deploy.sh HOST ASKPASS
+```
+
+`ASKPASS` must be an executable program that prints the root password.
+
+Each SystemRescue boot gets a new SSH host key, so the deployment script handles that using a temporary known-hosts file.
+
+Do not use this while a disk copy is running.
+
+---
+
+## Building the SystemRescue ISO
+
+The repository contains everything needed to turn an existing SystemRescue ISO into an `omaclone` rescue image.
+
+You need:
+
+- SystemRescue **13.02**
+- `sysrescue-customize`
+- `mksquashfs`
+- `xorriso`
+- `cargo`
+- the `x86_64-unknown-linux-musl` Rust target
+
+Then run:
+
+```sh
 ./bake.sh /path/to/systemrescue-13.02-amd64.iso
 ```
 
-The image is written to `out/systemrescue-13.02-amd64-omaclone.iso`. Pass a second path to write it somewhere else. The recipe is `autorun/autorun`, `sysrescue.d/200-omaclone.yaml`, the binary, `omaclone/omaclone-console`, `omaclone/capture-console`, and `omaclone/omaclone-tui.service`. `out/` is gitignored.
+The resulting image is:
 
-## Layout
+```text
+out/systemrescue-13.02-amd64-omaclone.iso
+```
 
-| Path | Role |
-| --- | --- |
-| `tui/` | The program. |
-| `autorun/autorun` | Boot script. Installs the binary, starts the TUI, reloads Thunderbolt. |
-| `omaclone/` | tty1 wrapper, the recording-console command, and the systemd unit copied onto the live system. |
-| `sysrescue.d/200-omaclone.yaml` | Turns the SystemRescue firewall off before autorun, so SSH can answer. |
-| `bake.sh` | Builds the stick binary into a SystemRescue ISO. |
+You can choose a different destination:
 
-There is no license file yet. Ask before redistributing.
+```sh
+./bake.sh /path/to/systemrescue-13.02-amd64.iso /path/to/output.iso
+```
+
+The build script creates the static Rust binary and adds it, together with the boot scripts and SystemRescue configuration, to the new ISO.
+
+Temporary build files are normally placed under `/var/tmp`. Set `BAKE_WORK` if you want to use another directory.
+
+For example:
+
+```sh
+BAKE_WORK=/some/large/directory ./bake.sh /path/to/systemrescue-13.02-amd64.iso
+```
+
+The resulting `out/` directory is gitignored.
+
+## Recording the TUI
+
+The repository also contains a small helper for recording the application on the supported MacBook's built-in display.
+
+The HDMI output exposes only the top-left 2560×1440 portion of the 2880×1800 panel. `capture-console` adjusts the console viewport so the entire TUI fits inside the captured area.
+
+Run:
+
+```sh
+capture-console
+```
+
+and restore the normal console viewport with:
+
+```sh
+capture-console restore
+```
+
+This is purely a recording aid; it is not required for cloning.
+
+---
+
+## Repository layout
+
+```text
+.
+├── tui/
+│   └──              Rust TUI and cloning implementation
+│
+├── autorun/
+│   └── autorun       SystemRescue boot/initialisation script
+│
+├── omaclone/
+│   ├── omaclone-console
+│   ├── capture-console
+│   └── omaclone-tui.service
+│
+├── sysrescue.d/
+│   └── 200-omaclone.yaml
+│
+└── bake.sh            Build the complete SystemRescue image
+```
+
+The most interesting parts of the Rust application are:
+
+```text
+tui/src/model.rs      TUI state machine and safety gates
+tui/src/copy.rs       Thunderbolt protocol and block-device copy
+tui/src/disk.rs       Disk and Thunderbolt discovery
+tui/src/wifi.rs       Optional Wi-Fi support
+tui/src/speed.rs      Thunderbolt throughput test
+tui/src/ui.rs         Terminal interface
+```
+
+## Project status
+
+This is a **special-purpose tool for a specific piece of hardware**, rather than a polished general-purpose cloning product.
+
+It has successfully been used to clone a complete MacBookPro11,4 internal disk over Thunderbolt and boot the resulting clone.
+
+If you want to adapt it to different hardware, the Thunderbolt setup and hardware-specific assumptions are the first places to look.
+
+## License
+
+`omaclone` is released into the public domain under [The Unlicense](https://unlicense.org/).
+
+Do whatever you want with it. 😄
