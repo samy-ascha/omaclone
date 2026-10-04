@@ -482,6 +482,10 @@ capture-console restore
 
 This is purely a recording aid; it is not required for cloning.
 
+The capture setup: an Elgato between the two MacBooks, with the TUI on one screen and the recording on the other.
+
+![Capture setup](screens/capture-setup.jpg)
+
 ---
 
 ## Repository layout
